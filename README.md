@@ -1,67 +1,203 @@
-# ME/CFS vs Depression Classification Dataset
+## MECFS vs Depression Classification API
 
-This repository provides a **synthetic dataset** designed to explore the differential diagnosis between **Myalgic Encephalomyelitis / Chronic Fatigue Syndrome (ME/CFS)** and **Depression**.  
-It is the first open dataset of its kind, created to help beginners and researchers practice machine learning on complex clinical cases.
+[English](README.md) | [Українська](README_UA.md)
 
----
+A production-ready FastAPI service for classifying patient records into Depression, ME/CFS, or Both. It includes a full pipeline: preprocessing, feature engineering, model training (Logistic Regression), inference, and a PostgreSQL-backed audit trail for predictions and inputs.
 
-## 🎯 Objective
+### Highlights
 
-The goal is to predict whether a patient has:
-
-- **ME/CFS**
-- **Depression**
-- **Both (comorbidity)**
-
-based on behavioral, clinical, and symptomatic features.
+- Endpoints for health, prediction (batch/single), training from database, and model info
+- Automatic database initialization and seeding from `data/processed/feature_engineered_data.csv`
+- Logged predictions (train and inference) with probabilities and confidence
+- Logged raw HTTP inputs for traceability
 
 ---
 
-## 📋 Dataset Overview
+## 1) Project Structure
 
-- **Rows:** ~1,000
-- **Format:** CSV (UTF-8)
-- **Target variable:** `diagnosis`
-- **Classes:** `ME/CFS`, `Depression`, `Both`
-
-### Features
-
-| Feature                        | Description                               |
-| ------------------------------ | ----------------------------------------- |
-| `age`                          | Patient's age                             |
-| `gender`                       | Gender (Male / Female / Other)            |
-| `fatigue_severity_scale_score` | Fatigue Severity Scale (0–10)             |
-| `depression_phq9_score`        | PHQ-9 depression score (0–27)             |
-| `pem_present`                  | Post-Exertional Malaise (Yes/No or 1/0)   |
-| `pem_duration_hours`           | Duration of PEM (hours)                   |
-| `sleep_quality_index`          | Sleep quality (1–10)                      |
-| `brain_fog_level`              | Brain fog level (1–10)                    |
-| `physical_pain_score`          | Physical pain intensity (1–10)            |
-| `stress_level`                 | Stress level (1–10)                       |
-| `work_status`                  | Working / Partially working / Not working |
-| `social_activity_level`        | Very low – Very high                      |
-| `exercise_frequency`           | Never – Daily                             |
-| `meditation_or_mindfulness`    | Practices mindfulness/meditation (Yes/No) |
-| `hours_of_sleep_per_night`     | Average sleep per night                   |
-| `diagnosis`                    | **Target** (ME/CFS, Depression, Both)     |
+```
+.
+├─ src/
+│  ├─ api/main.py                    # FastAPI app and endpoints
+│  ├─ inference_pipeline/inference.py # Inference pipeline
+│  ├─ feature_pipeline/               # Preprocessing & feature-engineering utilities
+│  └─ db/
+│     ├─ models.py                   # SQLAlchemy ORM models
+│     └─ session.py                  # Engine + session factory
+├─ data/processed/feature_engineered_data.csv
+├─ models/                           # Saved model and artifacts
+└─ notebooks/                        # Training & EDA notebooks
+```
 
 ---
 
-## ⚠️ Key Characteristics
+## 2) Requirements
 
-- Contains **1–5% missing values** across most features (to simulate real-world clinical data).
-- Controlled **noise** in numeric features prevents perfect separation between classes.
-- Diagnosis logic based on **clinical-like heuristics** (not random).
+- Python 3.11+
+- PostgreSQL reachable at:
+  - `postgresql+psycopg2://postgres:password@127.0.0.1:5433/me_cfs_vs_depression`
+  - Change this in `src/db/session.py` if needed.
+
+Install dependencies (recommended: `uv`):
+
+- With `uv` (honors `pyproject.toml` and `uv.lock`):
+
+```powershell
+uv sync
+```
+
+- Or install key runtime deps with pip (if you prefer manual):
+
+```powershell
+pip install fastapi uvicorn[standard] sqlalchemy psycopg2-binary pandas numpy scikit-learn joblib
+```
 
 ---
 
-## 🛠 Suggested Use Cases
+## 3) Database Setup
 
-- **Binary classification:** ME/CFS vs Depression
-- **Multiclass classification:** ME/CFS, Depression, Both
-- **Exploratory Data Analysis (EDA)**
-- **Feature engineering** practice
-- **Missing data imputation techniques**
-- **ML interpretability & explainable AI** in medical datasets
+Ensure PostgreSQL is running and the database exists.
+
+Create DB (example with `psql`):
+
+```powershell
+psql -h 127.0.0.1 -p 5433 -U postgres -c "CREATE DATABASE me_cfs_vs_depression;"
+```
+
+Tables the app uses:
+
+- `predictions`: stores predictions from training and inference with `source` = "train" | "inference"
+- `inference_inputs`: stores raw HTTP payloads for each predict request
+- `features`: main feature matrix used to train the best model; auto-created by CSV load
+
+Startup behavior:
+
+- On app start, ORM tables are created if missing.
+- If `features` table is missing or empty, the app auto-loads `data/processed/feature_engineered_data.csv` (falls back to `feature_engineered_train.csv`) and adds a 2025 `created_at` timestamp to each row.
+
+Manual load (optional):
+
+```powershell
+Invoke-RestMethod -Method Post -Uri http://localhost:8000/load-features
+```
 
 ---
+
+## 4) Run the API
+
+```powershell
+uvicorn src.api.main:app --reload
+```
+
+Open docs: `http://localhost:8000/docs`
+
+Health check:
+
+```powershell
+Invoke-RestMethod -Method Get -Uri http://localhost:8000/health
+```
+
+---
+
+## 5) Endpoints Overview
+
+- `GET /` – API info
+- `GET /health` – model and artifact availability
+- `POST /predict` – batch prediction (logs inputs and predictions to DB)
+- `POST /predict_single` – single prediction (wraps batch)
+- `GET /model_info` – model type, params, features
+- `POST /load-features` – load `feature_engineered_data.csv` into `features` with timestamps
+- `POST /train-model` – train Logistic Regression on DB `features`, save model, log train predictions
+
+---
+
+## 6) Training
+
+Train the model from the `features` table (no JSON body required):
+
+```powershell
+# Default split 90:10, seed=42
+Invoke-RestMethod -Method Post -Uri http://localhost:8000/train-model
+
+# Custom split and seed
+Invoke-RestMethod -Method Post -Uri "http://localhost:8000/train-model?test_size=0.15&random_state=123"
+```
+
+Effects:
+
+- Saves model to `models/best_logistic_model.pkl`
+- Logs all train-split predictions into `predictions` with `source="train"`
+
+---
+
+## 7) Inference
+
+Batch predictions (provide a list of records using the original schema fields like `age`, `gender`, `sleep_quality_index`, etc.):
+
+```powershell
+$body = @(
+  @{ age = 45; gender = "Female"; sleep_quality_index = 12; brain_fog_level = 7;
+     physical_pain_score = 6; stress_level = 5; depression_phq9_score = 8;
+     fatigue_severity_scale_score = 40; pem_duration_hours = 24; hours_of_sleep_per_night = 6;
+     pem_present = 1; work_status = "Partially working"; social_activity_level = "Low";
+     exercise_frequency = "Rarely"; meditation_or_mindfulness = "No" }
+)
+Invoke-RestMethod -Method Post -Uri http://localhost:8000/predict -Body ($body | ConvertTo-Json) -ContentType 'application/json'
+```
+
+Single prediction:
+
+```powershell
+$record = @{ age = 30; gender = "Female"; sleep_quality_index = 9; brain_fog_level = 3;
+             physical_pain_score = 2; stress_level = 2; depression_phq9_score = 3;
+             fatigue_severity_scale_score = 15; pem_duration_hours = 4; hours_of_sleep_per_night = 8;
+             pem_present = 0; work_status = "Not working"; social_activity_level = "Medium";
+             exercise_frequency = "Sometimes"; meditation_or_mindfulness = "Yes" }
+Invoke-RestMethod -Method Post -Uri http://localhost:8000/predict_single -Body ($record | ConvertTo-Json) -ContentType 'application/json'
+```
+
+Behavior:
+
+- Saves input payload to `inference_inputs`
+- Saves each prediction to `predictions` with `source="inference"`
+
+Optional: include engineered features in response
+
+```powershell
+Invoke-RestMethod -Method Post -Uri "http://localhost:8000/predict?include_features=true" -Body ($body | ConvertTo-Json) -ContentType 'application/json'
+```
+
+---
+
+## 8) Model Artifacts
+
+Expected in `models/`:
+
+- `best_logistic_model.pkl`
+- `label_encoder.pkl`
+- `robust_scaler.pkl`
+- `ordinal_mappings.pkl`
+- `imputer_stats.pkl`
+
+`/health` and `/model_info` summarize availability/details.
+
+---
+
+## 9) Notebooks
+
+Refer to `notebooks/` (e.g., `02_feature_eng_encoding.ipynb`, `04_modeling.ipynb`) for details on how feature engineering and Logistic Regression parameters were derived. The service mirrors these steps via `src/feature_pipeline` and `src/inference_pipeline`.
+
+---
+
+## 10) Configuration
+
+- Database URL is defined in `src/db/session.py`. Update it to match your environment if needed.
+- On startup, `features` is auto-seeded if empty. You can re-seed via `POST /load-features`.
+
+---
+
+## 11) Troubleshooting
+
+- If the API starts but DB logging fails, predictions still work; errors are caught and do not break responses.
+- Ensure PostgreSQL is reachable and credentials are correct.
+- If `feature_engineered_data.csv` is absent, the app falls back to `feature_engineered_train.csv` when seeding.
