@@ -6,8 +6,7 @@ A production-ready FastAPI service for classifying patient records into Depressi
 
 ### Highlights
 
-- Endpoints for health, prediction (batch/single), training from database, and model info
-- Automatic database initialization and seeding from `data/processed/feature_engineered_data.csv`
+- Endpoints for health, prediction, training from database, and model info
 - Logged predictions (train and inference) with probabilities and confidence
 - Logged raw HTTP inputs for traceability
 
@@ -75,14 +74,6 @@ Startup behavior:
 - On app start, ORM tables are created if missing.
 - If `features` table is missing or empty, the app auto-loads `data/processed/feature_engineered_data.csv` (falls back to `feature_engineered_train.csv`) and adds a 2025 `created_at` timestamp to each row.
 
-Manual load (optional):
-
-```powershell
-Invoke-RestMethod -Method Post -Uri http://localhost:8000/load-features
-```
-
----
-
 ## 4) Run the API
 
 ```powershell
@@ -104,9 +95,7 @@ Invoke-RestMethod -Method Get -Uri http://localhost:8000/health
 - `GET /` – API info
 - `GET /health` – model and artifact availability
 - `POST /predict` – batch prediction (logs inputs and predictions to DB)
-- `POST /predict_single` – single prediction (wraps batch)
 - `GET /model_info` – model type, params, features
-- `POST /load-features` – load `feature_engineered_data.csv` into `features` with timestamps
 - `POST /train-model` – train Logistic Regression on DB `features`, save model, log train predictions
 
 ---
@@ -114,6 +103,8 @@ Invoke-RestMethod -Method Get -Uri http://localhost:8000/health
 ## 6) Training
 
 Train the model from the `features` table (no JSON body required):
+
+![alt text](image-1.png)
 
 ```powershell
 # Default split 90:10, seed=42
@@ -134,6 +125,8 @@ Effects:
 
 Batch predictions (provide a list of records using the original schema fields like `age`, `gender`, `sleep_quality_index`, etc.):
 
+![alt text](image.png)
+
 ```powershell
 $body = @(
   @{ age = 45; gender = "Female"; sleep_quality_index = 12; brain_fog_level = 7;
@@ -145,27 +138,10 @@ $body = @(
 Invoke-RestMethod -Method Post -Uri http://localhost:8000/predict -Body ($body | ConvertTo-Json) -ContentType 'application/json'
 ```
 
-Single prediction:
-
-```powershell
-$record = @{ age = 30; gender = "Female"; sleep_quality_index = 9; brain_fog_level = 3;
-             physical_pain_score = 2; stress_level = 2; depression_phq9_score = 3;
-             fatigue_severity_scale_score = 15; pem_duration_hours = 4; hours_of_sleep_per_night = 8;
-             pem_present = 0; work_status = "Not working"; social_activity_level = "Medium";
-             exercise_frequency = "Sometimes"; meditation_or_mindfulness = "Yes" }
-Invoke-RestMethod -Method Post -Uri http://localhost:8000/predict_single -Body ($record | ConvertTo-Json) -ContentType 'application/json'
-```
-
 Behavior:
 
 - Saves input payload to `inference_inputs`
 - Saves each prediction to `predictions` with `source="inference"`
-
-Optional: include engineered features in response
-
-```powershell
-Invoke-RestMethod -Method Post -Uri "http://localhost:8000/predict?include_features=true" -Body ($body | ConvertTo-Json) -ContentType 'application/json'
-```
 
 ---
 

@@ -5,7 +5,6 @@
 ### Основні можливості
 
 - Ендпоінти для перевірки здоров'я, прогнозування (пакетне/одиничне), навчання з бази даних та інформації про модель
-- Автоматична ініціалізація та наповнення бази даних з `data/processed/feature_engineered_data.csv`
 - Журналювання прогнозів (навчання та висновки) з ймовірностями та впевненістю
 - Журналювання необроблених HTTP-запитів для відстеження
 
@@ -73,12 +72,6 @@ psql -h 127.0.0.1 -p 5433 -U postgres -c "CREATE DATABASE me_cfs_vs_depression;"
 - При старті додатку ORM таблиці створюються, якщо їх немає.
 - Якщо таблиця `features` відсутня або порожня, додаток автоматично завантажує `data/processed/feature_engineered_data.csv` (з відкатом до `feature_engineered_train.csv`) і додає мітку часу `created_at` 2025 року до кожного рядка.
 
-Ручне завантаження (опціонально):
-
-```powershell
-Invoke-RestMethod -Method Post -Uri http://localhost:8000/load-features
-```
-
 ---
 
 ## 4) Запуск API
@@ -102,9 +95,7 @@ Invoke-RestMethod -Method Get -Uri http://localhost:8000/health
 - `GET /` – інформація про API
 - `GET /health` – доступність моделі та артефактів
 - `POST /predict` – пакетне прогнозування (журналює входи та прогнози в БД)
-- `POST /predict_single` – одиничне прогнозування (обгортка пакетного)
 - `GET /model_info` – тип моделі, параметри, ознаки
-- `POST /load-features` – завантаження `feature_engineered_data.csv` в `features` з мітками часу
 - `POST /train-model` – навчання Логістичної регресії на `features` з БД, збереження моделі, журналювання прогнозів навчання
 
 ---
@@ -112,6 +103,8 @@ Invoke-RestMethod -Method Get -Uri http://localhost:8000/health
 ## 6) Навчання
 
 Навчіть модель з таблиці `features` (не потрібно тіло JSON):
+
+![alt text](image-3.png)
 
 ```powershell
 # Розподіл за замовчуванням 90:10, seed=42
@@ -128,9 +121,11 @@ Invoke-RestMethod -Method Post -Uri "http://localhost:8000/train-model?test_size
 
 ---
 
-## 7) Висновки (Inference)
+## 7) Прогнози (Inference)
 
 Пакетні прогнози (надайте список записів з оригінальними полями схеми як `age`, `gender`, `sleep_quality_index`, тощо):
+
+![alt text](image-2.png)
 
 ```powershell
 $body = @(
@@ -141,17 +136,6 @@ $body = @(
      exercise_frequency = "Rarely"; meditation_or_mindfulness = "No" }
 )
 Invoke-RestMethod -Method Post -Uri http://localhost:8000/predict -Body ($body | ConvertTo-Json) -ContentType 'application/json'
-```
-
-Одиничне прогнозування:
-
-```powershell
-$record = @{ age = 30; gender = "Female"; sleep_quality_index = 9; brain_fog_level = 3;
-             physical_pain_score = 2; stress_level = 2; depression_phq9_score = 3;
-             fatigue_severity_scale_score = 15; pem_duration_hours = 4; hours_of_sleep_per_night = 8;
-             pem_present = 0; work_status = "Not working"; social_activity_level = "Medium";
-             exercise_frequency = "Sometimes"; meditation_or_mindfulness = "Yes" }
-Invoke-RestMethod -Method Post -Uri http://localhost:8000/predict_single -Body ($record | ConvertTo-Json) -ContentType 'application/json'
 ```
 
 Поведінка:
