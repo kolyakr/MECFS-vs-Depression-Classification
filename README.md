@@ -4,6 +4,8 @@
 
 A production-ready FastAPI service for classifying patient records into Depression, ME/CFS, or Both. It includes a full pipeline: preprocessing, feature engineering, model training (Logistic Regression), inference, and a PostgreSQL-backed audit trail for predictions and inputs.
 
+https://github.com/user-attachments/assets/369ae6fb-c9f8-4eb9-a7bc-7bc7bf37db68
+
 ### Highlights
 
 - Endpoints for health, prediction, training from database, and model info
