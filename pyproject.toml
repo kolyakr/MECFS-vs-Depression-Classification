@@ -1,5 +1,5 @@
 [project]
-name = "ME/CFS VS DEPRESSION CLASSIFICATION"
+name = "mecfs_vs_depression_classification"
 version = "0.1.0"
 description = "Add your description here"
 readme = "README.md"
@@ -7,7 +7,6 @@ requires-python = ">=3.11"
 dependencies = [
     "boto3>=1.40.33",
     "category-encoders>=2.8.1",
-    "evidently>=0.7.12",
     "fastapi>=0.116.1",
     "uvicorn[standard]>=0.30.5",
     "great-expectations==1.5.8",
@@ -26,4 +25,6 @@ dependencies = [
     "streamlit>=1.48.1",
     "sqlalchemy>=2.0.30",
     "psycopg2-binary>=2.9.9",
+    "evidently>=0.4.14",
+    "pydantic>=2.0.0"
 ]

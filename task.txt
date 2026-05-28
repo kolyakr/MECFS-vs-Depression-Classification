@@ -1,0 +1,45 @@
+Input Data:
+• Reference data: this is your historical dataset from Kaggle, which was used to train the model (e.g., all records from the features table where source = 'train').
+• Current data: these are new data received via the API for prediction (e.g., records from the inference_inputs or predictions table where source = 'inference').
+
+Task:
+
+1. Data Preparation:
+• Extract reference (for training) and current (API requests) subsets from the database (via SQL or ORM).
+• Align both datasets to have the same structure (same columns, data types, etc.).
+• Ensure that both datasets include:
+  o timestamp
+  o features that were input to the model
+  o if available — ground truth (target variable) for inference requests (if it has already become known)
+
+2. Dashboard Creation in Evidently:
+• Use the Evidently AI library to create an HTML dashboard.
+• Generate at least one of the following report types:
+  o Data Drift Report — detecting changes in the distribution of input data.
+  o Target Drift Report — if the target variable is available.
+  o Classification Performance Report — if ground truth is available.
+  o Data Quality Report — basic check for missing values, unique values, data types.
+• Save the report as an .html file.
+Tip: You can generate a separate dashboard for each type of monitoring or a combined one.
+
+3. Results Analysis:
+• Review the generated dashboard.
+• In the lab report conclusion:
+  o Describe whether data drift or other changes were detected.
+  o Identify which features show the largest deviations.
+  o Check if the class distribution of the target has changed.
+  o Determine if there are any signs of model performance degradation.
+  o Decide whether the situation requires a model update.
+
+4. Automation (optional, +bonus). If you want to improve the workflow:
+• Create a Python script that regularly compares new data from the database with the reference and generates a report automatically;
+• Or implement a FastAPI endpoint /monitor that returns the HTML dashboard on request.
+
+Submission Requirements:
+• Jupyter Notebook or Python script that:
+  o Fetches both datasets from the database;
+  o Invokes Evidently;
+  o Generates and saves the .html dashboard.
+• One or more HTML dashboard files.
+• Markdown cell with analysis of the results (conclusion).
+• In case of automation — description of implementation and demonstration.

@@ -7,11 +7,13 @@ FastAPI application for MECFS vs Depression Classification.
 """
 
 from fastapi import FastAPI, HTTPException, Query
+from fastapi.responses import HTMLResponse
 from pathlib import Path
 from typing import List, Dict, Any
 import pandas as pd
 import numpy as np
 from datetime import datetime, timedelta
+import uuid
 
 from sqlalchemy.orm import Session as OrmSession
 from sqlalchemy import create_engine
@@ -32,6 +34,7 @@ except Exception:
         return OrmSession(bind=get_engine())
 
 from src.inference_pipeline.inference import predict
+from src.monitoring.report import generate_dashboard
 
 # ----------------------------
 # Config
@@ -159,6 +162,8 @@ def root():
             "health": "/health",
             "predict": "/predict",
             "train_model": "/train-model",
+            "model_info": "/model_info",
+            "monitor": "/monitor",
             "docs": "/docs"
         }
     }
@@ -223,21 +228,53 @@ def predict_batch(
             "timestamp": datetime.now().isoformat()
         }
         
+        if include_features:
+            prediction_cols = {
+                "predicted_diagnosis", "predicted_diagnosis_id",
+                "prob_Depression", "prob_ME/CFS", "prob_Both",
+                "prediction_confidence", "actual_diagnosis"
+            }
+            feat_cols = [c for c in predictions_df.columns if c not in prediction_cols]
+            response["feature_columns"] = feat_cols
+            response["engineered_features"] = predictions_df[feat_cols].to_dict(orient="records")
+        
         try:
             db: OrmSession = get_session()
-            # Save input payload as one record per call
+            # Save input rows: one InferenceInput per item with explicit columns
+            request_id = str(uuid.uuid4())
             if InferenceInput is not None:
-                payload_record = InferenceInput(
-                    payload={"data": data, "include_features": include_features},
-                )
-                db.add(payload_record)
-                db.flush()  
+                input_rows = []
+                for item in data:
+                    row = InferenceInput(
+                        request_id=request_id,
+                        include_features=bool(include_features),
+                        age=item.get("age"),
+                        gender=item.get("gender"),
+                        pem_present=item.get("pem_present"),
+                        work_status=item.get("work_status"),
+                        stress_level=item.get("stress_level"),
+                        brain_fog_level=item.get("brain_fog_level"),
+                        exercise_frequency=item.get("exercise_frequency"),
+                        pem_duration_hours=item.get("pem_duration_hours"),
+                        physical_pain_score=item.get("physical_pain_score"),
+                        sleep_quality_index=item.get("sleep_quality_index"),
+                        depression_phq9_score=item.get("depression_phq9_score"),
+                        social_activity_level=item.get("social_activity_level"),
+                        hours_of_sleep_per_night=item.get("hours_of_sleep_per_night"),
+                        meditation_or_mindfulness=item.get("meditation_or_mindfulness"),
+                        fatigue_severity_scale_score=item.get("fatigue_severity_scale_score"),
+                    )
+                    input_rows.append(row)
+                if input_rows:
+                    db.add_all(input_rows)
+                db.flush()
 
             if Prediction is not None:
                 now_ts = datetime.now()
                 records = []
                 for i in range(len(predictions_df)):
                     rec = Prediction(
+                        request_id=request_id,
                         source="inference",
                         predicted_label=response["predictions"][i],
                         prob_depression=response["probabilities"]["Depression"][i],
@@ -248,6 +285,27 @@ def predict_batch(
                     )
                     records.append(rec)
                 db.add_all(records)
+            # Append engineered features into features with source='inference'
+            try:
+                engine = get_engine()
+                fe = predictions_df.copy()
+                # remove prediction-only columns if present
+                drop_cols = [c for c in [
+                    "predicted_diagnosis", "predicted_diagnosis_id",
+                    "prob_Depression", "prob_ME/CFS", "prob_Both",
+                    "prediction_confidence", "actual_diagnosis"
+                ] if c in fe.columns]
+                if drop_cols:
+                    fe = fe.drop(columns=drop_cols)
+                # persist numeric diagnosis for inference rows from predicted ids
+                if "predicted_diagnosis_id" in predictions_df.columns and "diagnosis" not in fe.columns:
+                    fe["diagnosis"] = predictions_df["predicted_diagnosis_id"].astype(int)
+                fe["created_at"] = now_ts
+                fe["source"] = "inference"
+                with engine.begin() as conn:
+                    fe.to_sql("features", con=conn, if_exists="append", index=False)
+            except Exception:
+                pass
             db.commit()
         except SQLAlchemyError:
             if 'db' in locals():
@@ -263,7 +321,11 @@ def predict_batch(
 
 
 @app.post("/train-model")
-def train_model_from_db(test_size: float = 0.1, random_state: int = 42):
+def train_model_from_db(
+    test_size: float = 0.1,
+    random_state: int = 42,
+    include_inference: bool = Query(False, description="If true, use both source='train' and source='inference' for training"),
+):
     """Train LogisticRegression on features from DB (90:10 split) and log predictions with source='train'."""
     from sklearn.linear_model import LogisticRegression
     from sklearn.model_selection import train_test_split
@@ -272,15 +334,17 @@ def train_model_from_db(test_size: float = 0.1, random_state: int = 42):
     engine = get_engine()
     try:
         features_df = pd.read_sql_table("features", con=engine)
+        if "source" in features_df.columns and not include_inference:
+            features_df = features_df[features_df["source"] == "train"]
         if "diagnosis" not in features_df.columns:
             raise HTTPException(status_code=400, detail="'features' table must include 'diagnosis' column")
 
         y = features_df["diagnosis"]
         X = features_df.drop(columns=["diagnosis"])
-        # Drop non-feature columns if present
-        drop_cols = [c for c in ["created_at", "id"] if c in X.columns]
+        drop_cols = [c for c in ["created_at", "id", "source"] if c in X.columns]
         if drop_cols:
             X = X.drop(columns=drop_cols)
+        X = X.select_dtypes(include=[np.number])
 
         X_train, X_test, y_train, y_test = train_test_split(
             X, y, test_size=test_size, random_state=random_state, stratify=y
@@ -299,28 +363,35 @@ def train_model_from_db(test_size: float = 0.1, random_state: int = 42):
         MODEL_PATH.parent.mkdir(parents=True, exist_ok=True)
         dump(model, MODEL_PATH)
 
-        y_pred = model.predict(X_train)
-        y_proba = model.predict_proba(X_train)
+        from sklearn.metrics import accuracy_score, precision_score, recall_score, f1_score
+        y_pred = model.predict(X_test)
+        y_proba = model.predict_proba(X_test)
+        acc = float(accuracy_score(y_test, y_pred))
+        prec = float(precision_score(y_test, y_pred, average="macro", zero_division=0))
+        rec = float(recall_score(y_test, y_pred, average="macro", zero_division=0))
+        f1 = float(f1_score(y_test, y_pred, average="macro", zero_division=0))
 
         try:
             db: OrmSession = get_session()
-            if Prediction is not None:
-                now_ts = datetime.now()
-                records = []
-                for i in range(len(y_pred)):
-                    rec = Prediction(
-                        source="train",
-                        predicted_label=str(y_pred[i]),
-                        predicted_id=int(y_pred[i]),
-                        prob_depression=float(y_proba[i, 0]),
-                        prob_me_cfs=float(y_proba[i, 1]),
-                        prob_both=float(y_proba[i, 2]),
-                        confidence=float(np.max(y_proba[i, :])),
-                        created_at=now_ts,
-                    )
-                    records.append(rec)
-                db.add_all(records)
-                db.commit()
+            from sqlalchemy import text as _text
+            n_rows = int(len(features_df))
+            n_train = int((features_df["source"] == "train").sum()) if "source" in features_df.columns else n_rows
+            n_inference = int((features_df["source"] == "inference").sum()) if "source" in features_df.columns else 0
+            insert_sql = _text(
+                "INSERT INTO metrics (run_type, accuracy, precision, recall, f1, n_rows, n_train, n_inference) "
+                "VALUES (:run_type, :accuracy, :precision, :recall, :f1, :n_rows, :n_train, :n_inference)"
+            )
+            db.execute(insert_sql, {
+                "run_type": "train",
+                "accuracy": acc,
+                "precision": prec,
+                "recall": rec,
+                "f1": f1,
+                "n_rows": n_rows,
+                "n_train": n_train,
+                "n_inference": n_inference,
+            })
+            db.commit()
         except SQLAlchemyError:
             if 'db' in locals():
                 db.rollback()
@@ -366,12 +437,34 @@ def model_info():
             "model_path": str(MODEL_PATH)
         }
 
+@app.get("/monitor", response_class=HTMLResponse)
+def monitor():
+    """Generate and return Evidently dashboard HTML."""
+    try:
+        out_path = PROJECT_ROOT / "reports" / "monitoring_report.html"
+        path = generate_dashboard(out_path)
+        
+        if not path.exists():
+            raise HTTPException(status_code=500, detail="Report file was not generated")
+        
+        html_content = path.read_text(encoding="utf-8")
+        
+        return HTMLResponse(
+            content=html_content,
+            status_code=200,
+            headers={"Content-Type": "text/html; charset=utf-8"}
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Monitor generation failed: {str(e)}")
+
 # ----------------------------
 # Error handlers
 # ----------------------------
 @app.exception_handler(404)
 async def not_found_handler(request, exc):
-    return {"error": "Endpoint not found", "available_endpoints": ["/", "/health", "/predict", "/predict_single", "/model_info", "/docs"]}
+    return {"error": "Endpoint not found", "available_endpoints": ["/", "/health", "/predict", "/train-model", "/model_info", "/monitor", "/docs"]}
 
 @app.exception_handler(500)
 async def internal_error_handler(request, exc):

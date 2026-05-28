@@ -90,6 +90,18 @@ Invoke-RestMethod -Method Get -Uri http://localhost:8000/health
 
 ---
 
+## 4.5) Запуск фронтенду (Streamlit UI)
+
+Для запуску інтерактивного веб-інтерфейсу виконайте:
+
+```powershell
+streamlit run src/app.py
+```
+
+Відкрийте в браузері: `http://localhost:8501`
+
+---
+
 ## 5) Огляд ендпоінтів
 
 - `GET /` – інформація про API
@@ -97,6 +109,7 @@ Invoke-RestMethod -Method Get -Uri http://localhost:8000/health
 - `POST /predict` – пакетне прогнозування (журналює входи та прогнози в БД)
 - `GET /model_info` – тип моделі, параметри, ознаки
 - `POST /train-model` – навчання Логістичної регресії на `features` з БД, збереження моделі, журналювання прогнозів навчання
+- `GET /monitor` – генерація та повернення дашборду моніторингу Evidently (HTML), що порівнює еталонні (навчальні) та поточні (висновкові) дані
 
 ---
 
@@ -104,7 +117,7 @@ Invoke-RestMethod -Method Get -Uri http://localhost:8000/health
 
 Навчіть модель з таблиці `features` (не потрібно тіло JSON):
 
-![alt text](image-3.png)
+![alt text](./images/image-3.png)
 
 ```powershell
 # Розподіл за замовчуванням 90:10, seed=42
@@ -125,7 +138,7 @@ Invoke-RestMethod -Method Post -Uri "http://localhost:8000/train-model?test_size
 
 Пакетні прогнози (надайте список записів з оригінальними полями схеми як `age`, `gender`, `sleep_quality_index`, тощо):
 
-![alt text](image-2.png)
+![alt text](./images/image-2.png)
 
 ```powershell
 $body = @(
@@ -147,6 +160,39 @@ Invoke-RestMethod -Method Post -Uri http://localhost:8000/predict -Body ($body |
 
 ```powershell
 Invoke-RestMethod -Method Post -Uri "http://localhost:8000/predict?include_features=true" -Body ($body | ConvertTo-Json) -ContentType 'application/json'
+```
+
+---
+
+## 7.5) Дашборд моніторингу
+
+Отримайте доступ до дашборду моніторингу Evidently для порівняння еталонних (навчальних) даних з поточними (висновковими) даними:
+
+```powershell
+# Відкрити в браузері
+Start-Process "http://localhost:8000/monitor"
+
+# Або використати curl/Invoke-RestMethod для збереження HTML
+Invoke-WebRequest -Uri http://localhost:8000/monitor -OutFile monitoring_report.html
+```
+
+Дашборд включає:
+
+- **Звіт про якість даних**: Відсутні значення, унікальні значення, типи даних
+- **Звіт про дрифт даних**: Виявляє зміни в розподілах ознак
+- **Звіт про дрифт цільової змінної**: Виявляє зміни в розподілі діагнозу (якщо доступно)
+- **Тренд метрик**: Метрики навчання в часі (точність, прецизійність, відкликання, F1)
+
+Звіт генерується на вимогу та порівнює:
+
+- **Еталонні дані**: Записи з таблиці `features`, де `source='train'`
+- **Поточні дані**: Записи з таблиці `features`, де `source='inference'`
+
+Ви також можете згенерувати звіт локально:
+
+```powershell
+python -m src.monitoring.report
+# Вихід збережено в: reports/monitoring_report.html
 ```
 
 ---

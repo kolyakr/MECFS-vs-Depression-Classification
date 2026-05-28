@@ -90,6 +90,18 @@ Invoke-RestMethod -Method Get -Uri http://localhost:8000/health
 
 ---
 
+## 4.5) Run the Frontend (Streamlit UI)
+
+To launch the interactive dashboard, run:
+
+```powershell
+streamlit run src/app.py
+```
+
+Open in browser: `http://localhost:8501`
+
+---
+
 ## 5) Endpoints Overview
 
 - `GET /` – API info
@@ -97,6 +109,7 @@ Invoke-RestMethod -Method Get -Uri http://localhost:8000/health
 - `POST /predict` – batch prediction (logs inputs and predictions to DB)
 - `GET /model_info` – model type, params, features
 - `POST /train-model` – train Logistic Regression on DB `features`, save model, log train predictions
+- `GET /monitor` – generate and return Evidently monitoring dashboard (HTML) comparing reference (train) vs current (inference) data
 
 ---
 
@@ -104,7 +117,7 @@ Invoke-RestMethod -Method Get -Uri http://localhost:8000/health
 
 Train the model from the `features` table (no JSON body required):
 
-![alt text](image-1.png)
+![alt text](./images/image-1.png)
 
 ```powershell
 # Default split 90:10, seed=42
@@ -125,7 +138,7 @@ Effects:
 
 Batch predictions (provide a list of records using the original schema fields like `age`, `gender`, `sleep_quality_index`, etc.):
 
-![alt text](image.png)
+![alt text](./images/image.png)
 
 ```powershell
 $body = @(
@@ -142,6 +155,39 @@ Behavior:
 
 - Saves input payload to `inference_inputs`
 - Saves each prediction to `predictions` with `source="inference"`
+
+---
+
+## 7.5) Monitoring Dashboard
+
+Access the Evidently monitoring dashboard to compare reference (training) data with current (inference) data:
+
+```powershell
+# Open in browser
+Start-Process "http://localhost:8000/monitor"
+
+# Or use curl/Invoke-RestMethod to save HTML
+Invoke-WebRequest -Uri http://localhost:8000/monitor -OutFile monitoring_report.html
+```
+
+The dashboard includes:
+
+- **Data Quality Report**: Missing values, unique values, data types
+- **Data Drift Report**: Detects changes in feature distributions
+- **Target Drift Report**: Detects changes in diagnosis distribution (if available)
+- **Metrics Trend**: Training metrics over time (accuracy, precision, recall, F1)
+
+The report is generated on-demand and compares:
+
+- **Reference data**: Records from `features` table where `source='train'`
+- **Current data**: Records from `features` table where `source='inference'`
+
+You can also generate the report locally:
+
+```powershell
+python -m src.monitoring.report
+# Output saved to: reports/monitoring_report.html
+```
 
 ---
 
